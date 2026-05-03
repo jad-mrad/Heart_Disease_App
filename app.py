@@ -388,7 +388,7 @@ def load_assets() -> tuple[Any, list[str]]:
     with open("heart_disease_model.pkl", "rb") as file:
         model = pickle.load(file)
 
-    with open("model_columns.pkl", "rb") as file:
+    with open("features.pkl", "rb") as file:
         model_columns = pickle.load(file)
 
     return model, model_columns
@@ -401,9 +401,7 @@ def build_input_frame(
     chol: int,
     thalch: int,
     oldpeak: float,
-    sex: str,
-    chest_pain: str,
-    exercise_angina: str,
+    ca: int,
 ) -> pd.DataFrame:
     input_data = pd.DataFrame(0, index=[0], columns=model_columns)
     input_data["age"] = age
@@ -411,21 +409,7 @@ def build_input_frame(
     input_data["chol"] = chol
     input_data["thalch"] = thalch
     input_data["oldpeak"] = oldpeak
-
-    if "sex_Male" in input_data.columns:
-        input_data["sex_Male"] = 1 if sex == "Male" else 0
-
-    chest_pain_map = {
-        "Atypical Angina": "cp_atypical angina",
-        "Non-Anginal Pain": "cp_non-anginal",
-        "Typical Angina": "cp_typical angina",
-    }
-    selected_cp_column = chest_pain_map.get(chest_pain)
-    if selected_cp_column and selected_cp_column in input_data.columns:
-        input_data[selected_cp_column] = 1
-
-    if "exang_True" in input_data.columns:
-        input_data["exang_True"] = 1 if exercise_angina == "Yes" else 0
+    input_data["ca"] = ca
 
     return input_data
 
@@ -441,26 +425,22 @@ def get_prediction_details(model: Any, input_data: pd.DataFrame) -> tuple[int, f
 def store_analysis_result(
     prediction: int,
     probability: float | None,
-    sex: str,
-    chest_pain: str,
-    exercise_angina: str,
     age: int,
     trestbps: int,
     chol: int,
     thalch: int,
     oldpeak: float,
+    ca: int,
 ) -> None:
     st.session_state["analysis_result"] = {
         "prediction": prediction,
         "probability": probability,
-        "sex": sex,
-        "chest_pain": chest_pain,
-        "exercise_angina": exercise_angina,
         "age": age,
         "trestbps": trestbps,
         "chol": chol,
         "thalch": thalch,
         "oldpeak": oldpeak,
+        "ca": ca,
     }
 
 
@@ -476,7 +456,7 @@ def render_hero() -> None:
                         <p class="brand-copy">AI-assisted heart risk screening</p>
                     </div>
                 </div>
-                <div class="eyebrow">Educational tool only</div>
+                <div class="eyebrow">Educational tool only, not medical diagnosis</div>
             </div>
             <div class="hero-grid">
                 <div class="hero-copy">
@@ -505,7 +485,7 @@ def render_hero() -> None:
                 <div class="notice-card">
                     <h3>Important medical notice</h3>
                     <p>
-                        This application is an educational machine learning demo. It is not a
+                        This application is an educational tool only, not a medical diagnosis. It is not a
                         medical device, does not replace a doctor, and must not be used as the
                         only basis for diagnosis or treatment decisions.
                     </p>
@@ -529,7 +509,7 @@ def render_sidebar() -> None:
             <div class="side-list">
                 <div class="side-item">
                     <h4>1. Enter the patient profile</h4>
-                    <p>Use age, blood pressure, cholesterol, max heart rate, ECG oldpeak, sex, chest pain, and exercise angina.</p>
+                    <p>Use age, blood pressure, cholesterol, max heart rate, ECG oldpeak, and number of major vessels (ca).</p>
                 </div>
                 <div class="side-item">
                     <h4>2. Submit the form</h4>
@@ -551,6 +531,8 @@ def render_sidebar() -> None:
             <div class="micro-label">Model</div>
             <h3 class="panel-title">Model snapshot</h3>
             <p class="panel-copy">
+                <strong>Model:</strong> Decision Tree Classification<br>
+                <strong>Accuracy:</strong> 80.65%<br>
                 Dataset: Cleveland heart disease data. Output: screening classification.
             </p>
         </section>
@@ -583,17 +565,15 @@ def render_result_dashboard(result: dict[str, Any]) -> None:
         f"**{'higher' if is_high_risk else 'lower'} likelihood** of heart disease."
     )
 
-    top_metrics = st.columns(4)
-    top_metrics[0].metric("Sex", result["sex"])
-    top_metrics[1].metric("Chest pain", result["chest_pain"])
-    top_metrics[2].metric("Exercise angina", result["exercise_angina"])
-    top_metrics[3].metric("Age", str(result["age"]))
+    top_metrics = st.columns(3)
+    top_metrics[0].metric("Age", str(result["age"]))
+    top_metrics[1].metric("Resting BP", f"{result['trestbps']} mm Hg")
+    top_metrics[2].metric("Cholesterol", f"{result['chol']} mg/dL")
 
-    lower_metrics = st.columns(4)
-    lower_metrics[0].metric("Resting BP", f"{result['trestbps']} mm Hg")
-    lower_metrics[1].metric("Cholesterol", f"{result['chol']} mg/dL")
-    lower_metrics[2].metric("Max heart rate", str(result["thalch"]))
-    lower_metrics[3].metric("Oldpeak", f"{result['oldpeak']:.1f}")
+    lower_metrics = st.columns(3)
+    lower_metrics[0].metric("Max heart rate", str(result["thalch"]))
+    lower_metrics[1].metric("Oldpeak", f"{result['oldpeak']:.1f}")
+    lower_metrics[2].metric("Major vessels (ca)", str(result["ca"]))
 
     probability = result["probability"]
     if probability is not None:
@@ -628,30 +608,13 @@ def render_form(model: Any, model_columns: list[str]) -> None:
     )
 
     with st.form("heart_risk_form", clear_on_submit=False):
-        st.markdown('<div class="micro-label">Basic information</div>', unsafe_allow_html=True)
-        basic_left, basic_right = st.columns(2, gap="medium")
+        st.markdown('<div class="micro-label">Clinical measurements</div>', unsafe_allow_html=True)
+        col1, col2 = st.columns(2, gap="medium")
 
-        with basic_left:
+        with col1:
             age = st.number_input("Age (years)", min_value=1, max_value=120, value=50)
             st.markdown('<div class="field-note">Patient age in years.</div>', unsafe_allow_html=True)
 
-            sex = st.selectbox("Biological sex", ["Male", "Female"])
-            st.markdown('<div class="field-note">Used exactly as encoded in the training data.</div>', unsafe_allow_html=True)
-
-        with basic_right:
-            chest_pain = st.selectbox(
-                "Chest pain type",
-                ["Asymptomatic", "Atypical Angina", "Non-Anginal Pain", "Typical Angina"],
-            )
-            st.markdown('<div class="field-note">Select the best clinical description.</div>', unsafe_allow_html=True)
-
-            exercise_angina = st.selectbox("Exercise-induced angina", ["No", "Yes"])
-            st.markdown('<div class="field-note">Indicates chest pain triggered by exercise.</div>', unsafe_allow_html=True)
-
-        st.markdown('<div class="micro-label">Clinical measurements</div>', unsafe_allow_html=True)
-        clinical_left, clinical_right = st.columns(2, gap="medium")
-
-        with clinical_left:
             trestbps = st.number_input(
                 "Resting blood pressure (mm Hg)",
                 min_value=50,
@@ -668,7 +631,7 @@ def render_form(model: Any, model_columns: list[str]) -> None:
             )
             st.markdown('<div class="field-note">Total serum cholesterol value.</div>', unsafe_allow_html=True)
 
-        with clinical_right:
+        with col2:
             thalch = st.number_input(
                 "Maximum heart rate achieved",
                 min_value=50,
@@ -686,6 +649,15 @@ def render_form(model: Any, model_columns: list[str]) -> None:
             )
             st.markdown('<div class="field-note">Exercise-induced ST depression relative to rest.</div>', unsafe_allow_html=True)
 
+            ca = st.number_input(
+                "Number of major vessels (ca)",
+                min_value=0,
+                max_value=4,
+                value=0,
+                step=1,
+            )
+            st.markdown('<div class="field-note">Number of major vessels colored by fluoroscopy.</div>', unsafe_allow_html=True)
+
         submitted = st.form_submit_button("Analyze Heart Risk")
 
     if submitted:
@@ -697,22 +669,18 @@ def render_form(model: Any, model_columns: list[str]) -> None:
                 chol=chol,
                 thalch=thalch,
                 oldpeak=oldpeak,
-                sex=sex,
-                chest_pain=chest_pain,
-                exercise_angina=exercise_angina,
+                ca=ca,
             )
             prediction, probability = get_prediction_details(model, input_data)
             store_analysis_result(
                 prediction=prediction,
                 probability=probability,
-                sex=sex,
-                chest_pain=chest_pain,
-                exercise_angina=exercise_angina,
                 age=age,
                 trestbps=trestbps,
                 chol=chol,
                 thalch=thalch,
                 oldpeak=oldpeak,
+                ca=ca,
             )
             st.session_state["analysis_error"] = None
         except Exception as error:
